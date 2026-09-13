@@ -1,0 +1,11 @@
+# Copy to proxy/dynamic/tls.yaml after provisioning a certificate. As the default
+# certificate it is also served to clients that connect by IP and send no SNI.
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/fullchain.pem
+        keyFile: /certs/privkey.pem
+  options:
+    default:
+      minVersion: VersionTLS12

@@ -1,0 +1,57 @@
+# Split deployment, API host: serves the web UI and API from the data host's
+# bucket. Holds no dataset and no storage.
+#
+#   cp .env.example .env              # set PWNED_S3_ENDPOINT and the S3 keys
+#   docker compose up -d
+name: testpassword-api
+
+services:
+  api:
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-api-s3:${PWNED_IMAGE_TAG:-latest}
+    environment:
+      PWNED_SOURCE: s3
+      PWNED_API_HOST: 0.0.0.0
+      PWNED_S3_ENDPOINT: ${PWNED_S3_ENDPOINT:?Set PWNED_S3_ENDPOINT to https://<data host>:8333}
+      PWNED_S3_BUCKET: ${PWNED_S3_BUCKET:-pwned}
+      PWNED_S3_ACCESS_KEY: ${PWNED_S3_ACCESS_KEY:?Set PWNED_S3_ACCESS_KEY}
+      PWNED_S3_SECRET_KEY: ${PWNED_S3_SECRET_KEY:?Set PWNED_S3_SECRET_KEY}
+      # Self-signed data host certificate: copy it here as s3-ca.pem, then
+      # uncomment this line and the volumes block below.
+      # AWS_CA_BUNDLE: /etc/pwned/s3-ca.pem
+    # volumes:
+    #   - ./s3-ca.pem:/etc/pwned/s3-ca.pem:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, /usr/bin/python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+
+  traefik:
+    image: traefik:v3.7@sha256:5203c3f39ca70de6790d964624e042463ffbd57715bc82be155cf224c0dd5144
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.web.address=:8080
+      - --entrypoints.websecure.address=:8443
+      - --entrypoints.web.http.redirections.entrypoint.to=:443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.http.tls=true
+    ports:
+      - "${PWNED_WEB_BIND:-127.0.0.1}:80:8080"
+      - "${PWNED_WEB_BIND:-127.0.0.1}:443:8443"
+    volumes:
+      - ./proxy/dynamic:/etc/traefik/dynamic:ro
+      - ./proxy/certs:/certs:ro
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy

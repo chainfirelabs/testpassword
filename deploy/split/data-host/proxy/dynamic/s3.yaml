@@ -1,0 +1,12 @@
+http:
+  routers:
+    s3:
+      rule: PathPrefix(`/`)
+      entryPoints: [s3]
+      service: s3
+      tls: {}
+  services:
+    s3:
+      loadBalancer:
+        servers:
+          - url: http://seaweedfs:8333

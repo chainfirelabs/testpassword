@@ -1,0 +1,18 @@
+http:
+  routers:
+    app:
+      rule: PathPrefix(`/`)
+      entryPoints: [websecure]
+      service: app
+      tls: {}
+      middlewares: [limits]
+  services:
+    app:
+      loadBalancer:
+        servers:
+          - url: http://api:8000
+  middlewares:
+    limits:
+      buffering:
+        maxRequestBodyBytes: 16384
+        memRequestBodyBytes: 16384

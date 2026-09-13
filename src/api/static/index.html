@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TestPassword</title>
+  <link rel="icon" type="image/png" href="/static/logo-banner.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <img src="/static/logo-banner.png" alt="TestPassword logo" class="logo">
+    <h1 class="title">TestPassword</h1>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">HIBP Offline Database</h2>
+        <p class="card-subtitle">Check if your password has appeared in known data breaches</p>
+      </div>
+
+      <form id="check-form" autocomplete="off">
+        <label for="mode">Input type</label>
+        <select id="mode" name="mode">
+          <option value="plaintext" selected>Plaintext password</option>
+          <option value="sha1">SHA1 hash</option>
+          <option value="ntlm">NTLM hash</option>
+        </select>
+
+        <label for="value" id="value-label">Password</label>
+        <input
+          type="password"
+          id="value"
+          name="value"
+          placeholder="Enter a password to check"
+          autocomplete="new-password"
+          spellcheck="false"
+          required
+        >
+        <button type="submit" id="check-btn">Check</button>
+      </form>
+
+      <div id="status" class="status" hidden></div>
+      <div id="results" class="results" hidden></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a href="https://chainfirelabs.com" target="_blank" rel="noopener noreferrer">© ChainFire Labs</a>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

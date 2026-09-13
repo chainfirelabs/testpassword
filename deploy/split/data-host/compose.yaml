@@ -1,0 +1,106 @@
+# Split deployment, data host: downloads the dataset, stores it in bundled
+# SeaweedFS, and exposes S3 to the API host through Traefik over HTTPS.
+# SeaweedFS itself speaks plain HTTP on the Compose network only; uploads from
+# this host use that network, and Traefik is the only thing published.
+#
+#   cp .env.example .env              # then set the two S3 keys
+#   docker compose up -d              # SeaweedFS, bucket setup, Traefik
+#   docker compose run -d ingest      # download both formats, then publish both
+name: testpassword-data
+
+x-s3: &s3
+  PWNED_SOURCE: s3
+  PWNED_S3_ENDPOINT: http://seaweedfs:8333
+  PWNED_S3_BUCKET: ${PWNED_S3_BUCKET:-pwned}
+  PWNED_S3_ACCESS_KEY: ${PWNED_S3_ACCESS_KEY:?Set PWNED_S3_ACCESS_KEY}
+  PWNED_S3_SECRET_KEY: ${PWNED_S3_SECRET_KEY:?Set PWNED_S3_SECRET_KEY}
+
+services:
+  download-sha1: &download
+    profiles: [download]
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-downloader:${PWNED_IMAGE_TAG:-latest}
+    command: [sha1]
+    user: "${PWNED_UID:-1000}:${PWNED_GID:-1000}"
+    volumes:
+      - ./data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  download-ntlm:
+    <<: *download
+    command: [ntlm]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+    command: [server, -dir=/data, -s3, -filer, -s3.port=8333]
+    environment:
+      AWS_ACCESS_KEY_ID: ${PWNED_S3_ACCESS_KEY:?Set PWNED_S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${PWNED_S3_SECRET_KEY:?Set PWNED_S3_SECRET_KEY}
+    volumes:
+      - seaweedfs-data:/data
+    restart: unless-stopped
+
+  s3-ready:
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-api-s3:${PWNED_IMAGE_TAG:-latest}
+    command: [/app/common/manage.py, ready, --create-bucket]
+    environment: *s3
+    depends_on: [seaweedfs]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  upload-sha1: &upload
+    profiles: [upload]
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-api-s3:${PWNED_IMAGE_TAG:-latest}
+    command: [/app/common/manage.py, upload, sha1]
+    environment: *s3
+    user: "${PWNED_UID:-1000}:${PWNED_GID:-1000}"
+    volumes:
+      - ./data:/data:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      s3-ready:
+        condition: service_completed_successfully
+
+  upload-ntlm:
+    <<: *upload
+    command: [/app/common/manage.py, upload, ntlm]
+
+  ingest:
+    profiles: [ingest]
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-downloader:${PWNED_IMAGE_TAG:-latest}
+    entrypoint: [/usr/bin/python3, /app/common/manage.py, ingest]
+    environment: *s3
+    user: "${PWNED_UID:-1000}:${PWNED_GID:-1000}"
+    volumes:
+      - ./data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      s3-ready:
+        condition: service_completed_successfully
+
+  traefik:
+    image: traefik:v3.7@sha256:5203c3f39ca70de6790d964624e042463ffbd57715bc82be155cf224c0dd5144
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.s3.address=:8333
+      - --entrypoints.s3.http.tls=true
+    ports:
+      - "${PWNED_S3_BIND:-0.0.0.0}:${PWNED_S3_PORT:-8333}:8333"
+    volumes:
+      - ./proxy/dynamic:/etc/traefik/dynamic:ro
+      - ./proxy/certs:/certs:ro
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    depends_on:
+      s3-ready:
+        condition: service_completed_successfully
+
+volumes:
+  seaweedfs-data:

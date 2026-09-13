@@ -1,0 +1,70 @@
+# Builds and pushes the TestPassword images via ci/build.sh, which owns all of
+# the builder logic for both CI systems.
+#
+# On a restricted runner, mirror the base images: put a buildkitd.toml in the
+# PWNED_BUILDKIT_CONFIG File variable and set PWNED_BUILDKIT_IMAGE to a BuildKit
+# image this runner can already pull. See the README.
+#
+# Anything reaching the internet during a build honours HTTP_PROXY/HTTPS_PROXY;
+# set them as CI/CD variables, or leave unset on an unrestricted runner.
+
+stages: [build]
+
+variables:
+  # Kubernetes executor: services share the pod network. If the daemon is
+  # unreachable, set DOCKER_HOST to tcp://localhost:2376 -- and note that TLS
+  # needs /certs/client shared between the job and the dind service via an
+  # empty_dir volume in the runner config. Without that shared volume, set
+  # DOCKER_TLS_CERTDIR to "" and use tcp://localhost:2375 instead.
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_CERT_PATH: "/certs/client"
+  DOCKER_TLS_VERIFY: "1"
+  # The dind service is a peer container, never reachable through the proxy.
+  # Append your own no-proxy hosts here rather than overriding NO_PROXY --
+  # including an internal registry mirror, which must not go via the proxy.
+  NO_PROXY: "docker,localhost,127.0.0.1,::1"
+  no_proxy: "docker,localhost,127.0.0.1,::1"
+  # Multi-arch needs binfmt on the runner; the default builds one platform.
+  PWNED_BUILD_PLATFORMS: linux/amd64
+
+.build:
+  stage: build
+  image: docker:28-cli
+  services:
+    - name: docker:28-dind
+      alias: docker
+  before_script:
+    # The dind service generates its TLS material into the shared /certs volume
+    # after the container starts, so a job that reaches this point quickly can
+    # find /certs/client/ca.pem missing. That is a startup race, not a broken
+    # config: wait for the daemon rather than failing the pipeline.
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [ "$i" -ge 60 ]; then
+          echo "docker daemon not ready after ${i}s; last error:" >&2
+          ls -l "${DOCKER_CERT_PATH:-/certs/client}" 2>&1 || true
+          docker info || true
+          exit 1
+        fi
+        sleep 1
+      done
+      echo "docker daemon ready after ${i}s"
+
+build:
+  extends: .build
+  script:
+    - sh ci/build.sh --push
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Merge requests build without publishing anything.
+build:verify:
+  extends: .build
+  script:
+    - sh ci/build.sh
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

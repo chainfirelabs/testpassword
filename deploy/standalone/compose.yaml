@@ -1,0 +1,74 @@
+# All-in-one, no S3: the API serves the dataset straight from ./data.
+#
+#   cp .env.example .env && docker compose up -d
+#   docker compose run -d ingest      # download and validate both formats
+name: testpassword-standalone
+
+services:
+  download-sha1: &download
+    profiles: [download]
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-downloader:${PWNED_IMAGE_TAG:-latest}
+    command: [sha1]
+    user: "${PWNED_UID:-1000}:${PWNED_GID:-1000}"
+    volumes:
+      - ./data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  download-ntlm:
+    <<: *download
+    command: [ntlm]
+
+  ingest:
+    profiles: [ingest]
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-downloader:${PWNED_IMAGE_TAG:-latest}
+    entrypoint: [/usr/bin/python3, /app/common/manage.py, ingest]
+    user: "${PWNED_UID:-1000}:${PWNED_GID:-1000}"
+    volumes:
+      - ./data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  api:
+    image: ${PWNED_REGISTRY:-ghcr.io}/${PWNED_IMAGE_NAMESPACE:-chainfirelabs/testpassword}/pwned-api:${PWNED_IMAGE_TAG:-latest}
+    environment:
+      PWNED_DATA_DIR: /data
+      PWNED_API_HOST: 0.0.0.0
+      PWNED_SOURCE: dir
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, /usr/bin/python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+
+  traefik:
+    image: traefik:v3.7@sha256:5203c3f39ca70de6790d964624e042463ffbd57715bc82be155cf224c0dd5144
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.web.address=:8080
+      - --entrypoints.websecure.address=:8443
+      - --entrypoints.web.http.redirections.entrypoint.to=:443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.http.tls=true
+    ports:
+      - "${PWNED_WEB_BIND:-127.0.0.1}:80:8080"
+      - "${PWNED_WEB_BIND:-127.0.0.1}:443:8443"
+    volumes:
+      - ./proxy/dynamic:/etc/traefik/dynamic:ro
+      - ./proxy/certs:/certs:ro
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy

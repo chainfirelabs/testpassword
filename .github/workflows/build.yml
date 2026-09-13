@@ -1,0 +1,40 @@
+# Builds and pushes the TestPassword images via ci/build.sh.
+#
+# Set the HTTP_PROXY/HTTPS_PROXY/NO_PROXY repository variables only if this
+# runner needs a proxy to reach the internet; unset means a direct connection.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      # ci/build.sh creates its own builder when PWNED_BUILDKIT_CONFIG is set;
+      # this provides the default container builder for multi-platform builds.
+      - uses: docker/setup-buildx-action@v3
+
+      # Pull requests build all three images but publish nothing.
+      - name: Build${{ github.event_name != 'pull_request' && ' and push' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HTTP_PROXY: ${{ secrets.HTTP_PROXY || vars.HTTP_PROXY }}
+          HTTPS_PROXY: ${{ secrets.HTTPS_PROXY || vars.HTTPS_PROXY }}
+          NO_PROXY: ${{ secrets.NO_PROXY || vars.NO_PROXY }}
+          PWNED_NUGET_SOURCE_URL: ${{ secrets.PWNED_NUGET_SOURCE_URL || vars.PWNED_NUGET_SOURCE_URL }}
+          PWNED_PIP_INDEX_URL: ${{ secrets.PWNED_PIP_INDEX_URL || vars.PWNED_PIP_INDEX_URL }}
+          PWNED_PIP_TRUSTED_HOST: ${{ vars.PWNED_PIP_TRUSTED_HOST }}
+        run: sh ci/build.sh ${{ github.event_name != 'pull_request' && '--push' || '' }}
